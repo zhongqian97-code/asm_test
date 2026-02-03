@@ -1,0 +1,88 @@
+========================================
+实验: NORMAL冗余度 - 同时向两个FG添加不同大小磁盘
+时间: 2026年 02月 03日 星期二 14:49:09 CST
+========================================
+
+测试场景:
+- 初始状态: 2个FG各有1个500MB磁盘
+- 测试操作: 同时向fg1和fg2各添加1个800MB磁盘
+- 预期问题: 800MB != 500MB，是否允许？
+
+=== 步骤1: 创建NORMAL磁盘组(2个FG各1个500MB磁盘) ===
+
+SQL> CREATE DISKGROUP TGRP_NORM2 NORMAL REDUNDANCY 
+     FAILGROUP fg1 DISK 'ORCL:NORM_500M_1'
+     FAILGROUP fg2 DISK 'ORCL:NORM_500M_2'
+     ATTRIBUTE 'compatible.asm'='19.0';
+
+Diskgroup created.
+
+=== 步骤2: 查看初始状态 ===
+
+SQL> SELECT name, state, type, total_mb, free_mb FROM v$asm_diskgroup WHERE name='TGRP_NORM2';
+
+NAME            STATE       TYPE     TOTAL_MB    FREE_MB
+--------------- ----------- ------ ---------- ----------
+TGRP_NORM2      MOUNTED     NORMAL       1000        884
+
+SQL> SELECT name, path, failgroup, total_mb FROM v$asm_disk 
+     WHERE group_number=(SELECT group_number FROM v$asm_diskgroup WHERE name='TGRP_NORM2') 
+     ORDER BY failgroup;
+
+NAME            PATH                 FAILGROUP    TOTAL_MB
+--------------- -------------------- ---------- ----------
+NORM_500M_1     ORCL:NORM_500M_1     FG1               500
+NORM_500M_2     ORCL:NORM_500M_2     FG2               500
+
+=== 步骤3: 同时向两个FG各添加一个800MB磁盘 ===
+(注意: 800MB != 500MB，测试是否允许)
+
+SQL> ALTER DISKGROUP TGRP_NORM2 ADD 
+     FAILGROUP fg1 DISK 'ORCL:NORM_800M_1'
+     FAILGROUP fg2 DISK 'ORCL:NORM_800M_2';
+
+ALTER DISKGROUP TGRP_NORM2 ADD
+*
+ERROR at line 1:
+ORA-15032: not all alterations performed
+ORA-15410: Disks in disk group TGRP_NORM2 do not have equal size.
+
+=== 步骤4: 查看添加后状态 ===
+(确认添加失败，磁盘组状态未变化)
+
+SQL> SELECT name, state, type, total_mb, free_mb FROM v$asm_diskgroup WHERE name='TGRP_NORM2';
+
+NAME            STATE       TYPE     TOTAL_MB    FREE_MB
+--------------- ----------- ------ ---------- ----------
+TGRP_NORM2      MOUNTED     NORMAL       1000        884
+
+SQL> SELECT name, path, failgroup, total_mb FROM v$asm_disk 
+     WHERE group_number=(SELECT group_number FROM v$asm_diskgroup WHERE name='TGRP_NORM2') 
+     ORDER BY failgroup, total_mb;
+
+NAME            PATH                 FAILGROUP    TOTAL_MB
+--------------- -------------------- ---------- ----------
+NORM_500M_1     ORCL:NORM_500M_1     FG1               500
+NORM_500M_2     ORCL:NORM_500M_2     FG2               500
+
+(只有原来的2个500MB磁盘，800MB磁盘添加失败)
+
+=== 清理 ===
+
+SQL> DROP DISKGROUP TGRP_NORM2 INCLUDING CONTENTS;
+
+Diskgroup dropped.
+
+========================================
+实验结论
+========================================
+
+即使同时向所有failgroup添加相同大小的新磁盘，只要新磁盘大小与现有磁盘不同，
+ASM仍然会拒绝添加操作，报错:
+
+ORA-15410: Disks in disk group TGRP_NORM2 do not have equal size.
+
+这说明NORMAL冗余度对磁盘大小的要求是:
+- 磁盘组内所有磁盘必须大小相同
+- 不仅是同一FG内磁盘大小相同，而是整个磁盘组内所有磁盘大小必须相同
+- 无论是单独添加还是批量添加，只要大小不一致就会被拒绝
