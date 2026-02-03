@@ -289,7 +289,110 @@ ORA-15410: Disks in disk group TGRP_NORM do not have equal size.
 
 ---
 
-### 5.6 查看磁盘组状态
+### 5.6 补充实验：同时向两个FG添加不同大小磁盘
+
+**实验时间：** 2026-02-03 14:49:09 CST
+
+**测试场景：** 
+- 初始状态：2个FG各有1个500MB磁盘
+- 测试操作：同时向fg1和fg2各添加1个800MB磁盘
+- 验证问题：如果同时向所有FG添加相同数量的磁盘，但大小不同于现有磁盘，是否允许？
+
+**环境准备：**
+```bash
+# 创建测试磁盘
+dd if=/dev/zero of=d500m_1 bs=1M count=500  # 500MB
+dd if=/dev/zero of=d500m_2 bs=1M count=500  # 500MB
+dd if=/dev/zero of=d800m_1 bs=1M count=800  # 800MB
+dd if=/dev/zero of=d800m_2 bs=1M count=800  # 800MB
+
+# 创建ASM磁盘
+oracleasm createdisk NORM_500M_1 /dev/loop50
+oracleasm createdisk NORM_500M_2 /dev/loop51
+oracleasm createdisk NORM_800M_1 /dev/loop52
+oracleasm createdisk NORM_800M_2 /dev/loop53
+```
+
+**步骤1：创建NORMAL磁盘组**
+
+```sql
+CREATE DISKGROUP TGRP_NORM2 NORMAL REDUNDANCY 
+FAILGROUP fg1 DISK 'ORCL:NORM_500M_1'
+FAILGROUP fg2 DISK 'ORCL:NORM_500M_2'
+ATTRIBUTE 'compatible.asm'='19.0';
+```
+
+**运行结果：**
+```
+Diskgroup created.
+```
+
+**步骤2：查看初始状态**
+
+```sql
+SELECT name, state, type, total_mb, free_mb FROM v$asm_diskgroup WHERE name='TGRP_NORM2';
+SELECT name, path, failgroup, total_mb FROM v$asm_disk 
+WHERE group_number=(SELECT group_number FROM v$asm_diskgroup WHERE name='TGRP_NORM2') ORDER BY failgroup;
+```
+
+**运行结果：**
+```
+NAME            STATE       TYPE     TOTAL_MB    FREE_MB
+--------------- ----------- ------ ---------- ----------
+TGRP_NORM2      MOUNTED     NORMAL       1000        884
+
+NAME            PATH                 FAILGROUP    TOTAL_MB
+--------------- -------------------- ---------- ----------
+NORM_500M_1     ORCL:NORM_500M_1     FG1               500
+NORM_500M_2     ORCL:NORM_500M_2     FG2               500
+```
+
+**步骤3：同时向两个FG各添加一个800MB磁盘**
+
+```sql
+ALTER DISKGROUP TGRP_NORM2 ADD 
+FAILGROUP fg1 DISK 'ORCL:NORM_800M_1'
+FAILGROUP fg2 DISK 'ORCL:NORM_800M_2';
+```
+
+**运行结果：**
+```
+ALTER DISKGROUP TGRP_NORM2 ADD
+*
+ERROR at line 1:
+ORA-15032: not all alterations performed
+ORA-15410: Disks in disk group TGRP_NORM2 do not have equal size.
+```
+❌ **失败** - 即使同时向所有FG添加磁盘，只要大小不同于现有磁盘，仍然被拒绝
+
+**步骤4：确认磁盘组状态未变化**
+
+```sql
+SELECT name, path, failgroup, total_mb FROM v$asm_disk 
+WHERE group_number=(SELECT group_number FROM v$asm_diskgroup WHERE name='TGRP_NORM2') ORDER BY failgroup;
+```
+
+**运行结果：**
+```
+NAME            PATH                 FAILGROUP    TOTAL_MB
+--------------- -------------------- ---------- ----------
+NORM_500M_1     ORCL:NORM_500M_1     FG1               500
+NORM_500M_2     ORCL:NORM_500M_2     FG2               500
+```
+（只有原来的2个500MB磁盘，800MB磁盘添加失败）
+
+**补充实验结论：**
+
+> **即使同时向所有failgroup添加相同数量的新磁盘，只要新磁盘大小与现有磁盘不同，ASM仍然会拒绝添加操作。**
+>
+> 这说明NORMAL冗余度对磁盘大小的要求是：
+> - 磁盘组内**所有磁盘**必须大小相同
+> - 不仅是同一FG内磁盘大小相同，而是**整个磁盘组内所有磁盘大小必须相同**
+> - 无论是单独添加还是批量添加，只要大小不一致就会被拒绝
+
+---
+
+### 5.8 查看磁盘组状态
 
 **执行SQL：**
 ```sql
@@ -313,7 +416,7 @@ TDISK4     ORCL:TDISK4    FG3                   500
 
 ---
 
-### 5.7 NORMAL实验结论
+### 5.9 NORMAL实验结论
 
 | 测试项 | 结果 | 错误码 |
 |--------|------|--------|
@@ -322,8 +425,9 @@ TDISK4     ORCL:TDISK4    FG3                   500
 | 添加到新FG(相同大小) | ✅ 成功 | - |
 | 添加不同大小磁盘(1GB) | ❌ 失败 | ORA-15410 |
 | 添加更小磁盘(200MB) | ❌ 失败 | ORA-15410 |
+| 同时向所有FG添加不同大小磁盘 | ❌ 失败 | ORA-15410 |
 
-**结论：NORMAL冗余度不支持混合不同大小磁盘，且各failgroup的磁盘数量需要一致**
+**结论：NORMAL冗余度要求整个磁盘组内所有磁盘大小必须相同，且各failgroup的磁盘数量需要一致。即使同时向所有FG添加磁盘，只要大小不一致就会被拒绝。**
 
 ---
 
@@ -550,6 +654,7 @@ ORA-15029: disk 'ORCL:TDISK1' is already mounted by this instance
 2. **NORMAL冗余度**：
    - 至少需要2个failgroup
    - **不支持混合不同大小磁盘**（ORA-15410）
+   - **整个磁盘组内所有磁盘大小必须相同**，即使同时向所有FG添加也不行
    - **各failgroup的磁盘数量必须一致**（ORA-15411）
    - 生产环境推荐使用
 
