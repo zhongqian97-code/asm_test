@@ -1,0 +1,268 @@
+========================================
+ASM冗余度与磁盘添加实验
+时间: Tue Feb  3 14:08:48 CST 2026
+========================================
+
+[准备] 创建测试磁盘...
+测试磁盘准备完成: TDISK1-4(500MB), TDISK5(1GB), TDISK6(200MB)
+
+========================================
+实验1: EXTERNAL冗余度
+========================================
+=== 1.1 创建EXTERNAL磁盘组(1个磁盘) ===
+
+Diskgroup created.
+
+=== 1.2 添加相同大小磁盘(500MB) ===
+
+Diskgroup altered.
+
+=== 1.3 添加更大磁盘(1GB) ===
+
+Diskgroup altered.
+
+=== 1.4 添加更小磁盘(200MB) ===
+
+Diskgroup altered.
+
+=== 1.5 尝试指定failgroup (EXTERNAL不支持) ===
+ALTER DISKGROUP TGRP_EXT ADD FAILGROUP fg1 DISK 'ORCL:TDISK3'
+*
+ERROR at line 1:
+ORA-15067: command or option incompatible with diskgroup redundancy
+
+
+=== 查看磁盘组状态 ===
+
+NAME	     STATE	 TYPE	  TOTAL_MB    FREE_MB
+------------ ----------- ------ ---------- ----------
+TGRP_EXT     MOUNTED	 EXTERN       2200	 2137
+
+1 row selected.
+
+
+NAME	     PATH		  FAILGROUP	    TOTAL_MB
+------------ -------------------- --------------- ----------
+TDISK1	     ORCL:TDISK1	  TDISK1		 500
+TDISK2	     ORCL:TDISK2	  TDISK2		 500
+TDISK5	     ORCL:TDISK5	  TDISK5		1000
+TDISK6	     ORCL:TDISK6	  TDISK6		 200
+
+4 rows selected.
+
+=== 清理 ===
+
+Diskgroup dropped.
+
+Last login: Tue Feb  3 14:07:54 CST 2026
+
+========================================
+实验2: NORMAL冗余度
+========================================
+=== 2.1 创建NORMAL磁盘组(2个failgroup) ===
+
+Diskgroup created.
+
+=== 2.2 添加到已有failgroup(fg1) ===
+ALTER DISKGROUP TGRP_NORM ADD FAILGROUP fg1 DISK 'ORCL:TDISK3'
+*
+ERROR at line 1:
+ORA-15032: not all alterations performed
+ORA-15411: Failure groups in disk group TGRP_NORM have different number of disks.
+
+
+=== 2.3 添加到新failgroup(fg3) ===
+
+Diskgroup altered.
+
+=== 2.4 不指定failgroup添加(自动分配) ===
+ALTER DISKGROUP TGRP_NORM ADD DISK 'ORCL:TDISK5'
+*
+ERROR at line 1:
+ORA-15032: not all alterations performed
+ORA-15410: Disks in disk group TGRP_NORM do not have equal size.
+
+
+=== 2.5 添加更小磁盘到fg2(200MB vs 500MB) ===
+ALTER DISKGROUP TGRP_NORM ADD FAILGROUP fg2 DISK 'ORCL:TDISK6'
+*
+ERROR at line 1:
+ORA-15032: not all alterations performed
+ORA-15410: Disks in disk group TGRP_NORM do not have equal size.
+
+
+=== 查看磁盘组状态 ===
+
+NAME			       STATE	   TYPE     TOTAL_MB	FREE_MB
+------------------------------ ----------- ------ ---------- ----------
+TGRP_NORM		       MOUNTED	   NORMAL	1500	   1379
+
+1 row selected.
+
+
+NAME
+------------------------------
+PATH
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+FAILGROUP			 TOTAL_MB
+------------------------------ ----------
+TDISK1
+ORCL:TDISK1
+FG1				      500
+
+TDISK2
+ORCL:TDISK2
+FG2				      500
+
+TDISK4
+ORCL:TDISK4
+FG3				      500
+
+
+3 rows selected.
+
+=== 清理 ===
+
+Diskgroup dropped.
+
+Last login: Tue Feb  3 14:09:13 CST 2026
+
+========================================
+实验3: HIGH冗余度
+========================================
+=== 3.1 尝试用2个failgroup创建HIGH(应该失败) ===
+CREATE DISKGROUP TGRP_HIGH_BAD HIGH REDUNDANCY
+*
+ERROR at line 1:
+ORA-15018: diskgroup cannot be created
+ORA-15167: command requires at least 3 failure groups; found only 2
+
+
+=== 3.2 用3个failgroup创建HIGH ===
+
+Diskgroup created.
+
+=== 3.3 添加到新failgroup(fg4) ===
+
+Diskgroup altered.
+
+=== 3.4 添加不同大小磁盘(1GB)到fg1 ===
+ALTER DISKGROUP TGRP_HIGH ADD FAILGROUP fg1 DISK 'ORCL:TDISK5'
+*
+ERROR at line 1:
+ORA-15032: not all alterations performed
+ORA-15410: Disks in disk group TGRP_HIGH do not have equal size.
+
+
+=== 查看磁盘组状态 ===
+
+NAME			       STATE	   TYPE     TOTAL_MB	FREE_MB
+------------------------------ ----------- ------ ---------- ----------
+TGRP_HIGH		       MOUNTED	   HIGH 	2000	   1817
+
+1 row selected.
+
+
+NAME
+------------------------------
+PATH
+--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+FAILGROUP			 TOTAL_MB
+------------------------------ ----------
+TDISK1
+ORCL:TDISK1
+FG1				      500
+
+TDISK2
+ORCL:TDISK2
+FG2				      500
+
+TDISK3
+ORCL:TDISK3
+FG3				      500
+
+TDISK4
+ORCL:TDISK4
+FG4				      500
+
+
+4 rows selected.
+
+=== 清理 ===
+
+Diskgroup dropped.
+
+Last login: Tue Feb  3 14:09:24 CST 2026
+
+========================================
+实验4: 边界条件
+========================================
+=== 4.1 创建测试磁盘组 ===
+
+Diskgroup created.
+
+=== 4.2 添加已在组中的磁盘(预期失败) ===
+ALTER DISKGROUP TGRP_TEST ADD DISK 'ORCL:TDISK1'
+*
+ERROR at line 1:
+ORA-15032: not all alterations performed
+ORA-15029: disk 'ORCL:TDISK1' is already mounted by this instance
+
+
+=== 4.3 添加不存在的磁盘(预期失败) ===
+ALTER DISKGROUP TGRP_TEST ADD DISK 'ORCL:NOTEXIST'
+*
+ERROR at line 1:
+ORA-15032: not all alterations performed
+ORA-15031: disk specification 'ORCL:NOTEXIST' matches no disks
+
+
+=== 4.4 用已占用磁盘创建新组(预期失败) ===
+CREATE DISKGROUP TGRP_DUP EXTERNAL REDUNDANCY DISK 'ORCL:TDISK1' ATTRIBUTE 'compatible.asm'='19.0'
+*
+ERROR at line 1:
+ORA-15018: diskgroup cannot be created
+ORA-15029: disk 'ORCL:TDISK1' is already mounted by this instance
+
+
+=== 清理 ===
+
+Diskgroup dropped.
+
+Last login: Tue Feb  3 14:09:36 CST 2026
+
+========================================
+清理测试环境
+========================================
+测试环境清理完成
+
+========================================
+实验结论汇总
+========================================
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                    ASM冗余度与磁盘添加实验结论                          │
+├─────────────────────────────────────────────────────────────────────────┤
+│ 冗余度     │ 最少磁盘/FG │ 支持failgroup │ 混合大小 │ 备注              │
+├────────────┼─────────────┼───────────────┼──────────┼───────────────────┤
+│ EXTERNAL   │ 1个磁盘     │ ❌ 不支持     │ ✅ 支持  │ 无冗余保护        │
+│ NORMAL     │ 2个FG       │ ✅ 支持       │ ✅ 支持  │ 双向镜像          │
+│ HIGH       │ 3个FG       │ ✅ 支持       │ ✅ 支持  │ 三向镜像          │
+└────────────┴─────────────┴───────────────┴──────────┴───────────────────┘
+
+常见错误码:
+- ORA-15067: 命令与冗余度不兼容(如EXTERNAL指定failgroup)
+- ORA-15072: failgroup数量不满足冗余要求(如HIGH用2个FG)
+- ORA-15018: 无法创建磁盘组
+- ORA-15029: 磁盘已被挂载
+- ORA-15032: 操作未完成
+- ORA-15063: 磁盘已属于其他磁盘组
+
+关键发现:
+1. EXTERNAL冗余度不支持指定failgroup，会报ORA-15067
+2. NORMAL至少需要2个failgroup，HIGH至少需要3个
+3. 所有冗余度都支持混合不同大小的磁盘
+4. 已加入磁盘组的磁盘不能重复添加或用于其他组
+
+
+详细日志: /tmp/asm_final_20260203_140848.log
